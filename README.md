@@ -45,16 +45,16 @@ online_retail <- online_retail %>% filter(Country == "United Kingdom")
 table(online_retail$Country)
 ```
 Here is the result, we have 981330 sales data.
-![UK only](/Images/ukonly.jpg)
+![UK only](/Images/ukonly.JPG)
 
 Then, how about the statistical summary for the data?
-![Data Summary](/Images/summary1.jpg)
+![Data Summary](/Images/summary1.JPG)
 There are negative values on the *Quantity* and *Price*. Thus, we have to filter the data to take only the positive values.
 ```R
 online_retail <- online_retail %>% filter(Quantity >= 0 & Price >= 0)
 ```
 Then we will try to make sure that the data we collected contain no unknown products. Because the data description said that the *StockCode is A 5-digit integral number uniquely assigned to each distinct product*. Then, we can filter the data to get the products which have less than 5 digit *StockCode* or more than 6 digit *StockCode* (Since there are a lot of products has 6 digit *StockCode*).
-![StockCode](/Images/scode.jpg)
+![StockCode](/Images/scode.JPG)
 Then, we need to remove data that its *StockCode* equals to ADJUST2, AMAZONFEE, B, BANK CHARGES, D, m, M, S, TEST001, TEST002.
 ```R
 '%!in%' <- function(x,y)!('%in%'(x,y))
@@ -103,13 +103,13 @@ Next, we will count all active days (no holiday) in the sales of each products. 
 ```R
 retail_grouping <- online_retail %>% group_by(date, Description) %>% summarise(total_sales= sum(Quantity, na.rm = T))
 ```
-![Sales per Product per Day](/Images/salespp.jpg)
+![Sales per Product per Day](/Images/salespp.JPG)
 
 Then, we will lag the data to find the previous purchase date for every purchased products.
 ```R
 lagged <- retail_grouping %>% select(date, Description) %>% group_by(Description) %>% nest() %>% mutate(prev_data = lapply(data, lag)) %>% unnest()
 ```
-![Lagged](/Images/lagged.jpg)
+![Lagged](/Images/lagged.JPG)
 Find the number of holidays between *date* and *date1*, please make sure to remove the NA values in *date1*.
 ```R
 lagged <- lagged %>% filter(is.na(date1) == F)
@@ -125,7 +125,7 @@ lagged$duration <- lagged$date - lagged$date1
 lagged$duration <- as.numeric(lagged$duration)
 lagged$active_days <- lagged$duration - lagged$holidays
 ```
-![Lagged Active Days](/Images/lagged_active_days.jpg) 
+![Lagged Active Days](/Images/lagged_active_days.JPG) 
 
 ### Find ADI and CV^2
 Well, the data is ready for product segmentation! Now, let's find the ADI and CV^2 as the definition in the beginning of this part.
@@ -155,7 +155,7 @@ To get the number of product on each class, we do
 table(product_segmentation$classification)
 prop.table(table(product_segmentation$classification))
 ```
-![Product Segmentation Result](/Images/seg_result.jpg) 
+![Product Segmentation Result](/Images/seg_result.JPG) 
 Here we know that there are 311 products categorized as erratic products, 674 products categorized as intermittent products, 4128 products categorized as lumpy products, and 11 products categorized as smooth product.
 
 ## Forecast Sales - Smooth Product
@@ -174,18 +174,18 @@ sales_on_smooth <- sales_on_smooth %>% mutate(stockcode6 = case_when(nchar(Stock
 ```
 Then, we can analyze the best time-frame that we should use to forecast the data. Here are the results for weekly, monthly, and yearly sales for each smooth products.
 - Weekly Sales
-![Weekly Sales on Smooth](/Images/pivoted_weekly_smooth.jpg)
+![Weekly Sales on Smooth](/Images/pivoted_weekly_smooth.JPG)
 - Monthly Sales
-![Monthly Sales on Smooth](/Images/pivoted_monthly_smooth.jpg) 
+![Monthly Sales on Smooth](/Images/pivoted_monthly_smooth.JPG) 
 - Yearly Sales
-![Yearly Sales on Smooth](/Images/pivoted_yearly_smooth.jpg)
+![Yearly Sales on Smooth](/Images/pivoted_yearly_smooth.JPG)
 
 We can clearly see from the pictures above that we have a lot of zeros in our data. We will try to forecast our sales in weekly. then, look for the best method that we have. We can use library *hts* to accomplish this. 
 ```R
 library(hts)
 hirarchical_weekly_smooth <- hts(ts_weekly)
 ```
-![Hierarchical Weekly Smooth](/Images/hirarchical_weekly_smooth.jpg)
+![Hierarchical Weekly Smooth](/Images/hirarchical_weekly_smooth.JPG)
 
 Since we have only 2 levels in our hierarchical model, we can try both top-down and bottom-up forecast distribution method. The forecasting method that we'll try is Exponential Smoothing, Random Walk, and ARIMA. Here are the result of performance measure for all these methods.
 - Bottom-Up Approach
@@ -243,10 +243,10 @@ for (i in 1:nrow(grid)) {
 }
 ```
 Now, we have a list of parameters and AIC value from its model. The Akaike Information Critera (AIC) is one of the goodness-fit-criteria. The lower value of AIC, the better model we have. Here are our *result_list* values.
-![result_list](/Images/results_grid.jpg)
+![result_list](/Images/results_grid.JPG)
 This is our best SARIMA parameters and the SARIMA model.
-![Best SARIMA parameters](/Images/best_parameter.jpg)
-![Our SARIMA model](/Images/sarima_model.jpg)
+![Best SARIMA parameters](/Images/best_parameter.JPG)
+![Our SARIMA model](/Images/sarima_model.JPG)
 Then, we can plot our actual time-series data and the prediction based on our SARIMA model. We predict for the next 10 weeks.
 ```R
 library(TSPred)
@@ -255,7 +255,7 @@ plotarimapred(ts_weekly_smooth, best_arima, xlim=c(min(time(ts_weekly_smooth)), 
 ```
 ![Forecast Plot](/Images/smooth_fcast.png)
 Here are numerical result for our forecast
-![Smooth Product Forecast](/Images/smooth_fcast_num.jpg)
+![Smooth Product Forecast](/Images/smooth_fcast_num.JPG)
 ## Conclusion
 Finally, we are at the end of our session. We may conclude that for our smooth product category, demand follows the seasonal pattern. For the demand planning, we have to make sure that our products available in high number at the early weeks of 2012. 
 
