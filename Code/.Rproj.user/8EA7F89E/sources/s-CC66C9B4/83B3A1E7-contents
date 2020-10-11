@@ -1,0 +1,188 @@
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(readr)
+library(forecast)
+
+online_retail <- read_csv("../Data/online_retail_II.csv")
+
+head(online_retail)
+colnames(online_retail)
+
+online_retail <- online_retail %>% filter(Country == "United Kingdom")
+table(online_retail$Country)
+summary(online_retail)
+
+online_retail <- online_retail %>% filter(Quantity >= 0 & Price >= 0)
+
+online_retail %>% arrange(desc(Price)) %>% select(Price, Quantity, Description, `Customer ID`)
+
+check_scode <- online_retail %>% filter(nchar(online_retail$StockCode) < 5 | nchar(online_retail$StockCode) > 6)
+table(check_scode$StockCode)
+# online_retail %>% filter(StockCode == "TEST001")
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+r_scode <- c("ADJUST2", "AMAZONFEE", "B", "BANK CHARGES", "D", "m", "M", "S", "TEST001", "TEST002")
+online_retail <- online_retail %>% filter(StockCode %!in% r_scode)
+
+write_csv(online_retail, "../Data/online_retail_clean.csv")
+
+# Holiday checks
+online_retail$date <- as.Date(online_retail$InvoiceDate)
+all_dates <- online_retail %>% group_by(date) %>% distinct(date)
+
+min_date <- min(all_dates$date)
+max_date <- max(all_dates$date)
+
+dates_sequence <- seq.Date(from = min_date, to= max_date, by= 1)
+length(dates_sequence)
+dates_sequence <- data.frame(date= dates_sequence)
+
+holidays <- dates_sequence %>% anti_join(all_dates)
+
+holidays_count <- function(curr_date, prev_date) {
+  curr_date <- as.Date(curr_date)
+  prev_date <- as.Date(prev_date)
+  
+  seq_df <- data.frame(date= seq.Date(prev_date, curr_date, by = 1))
+  holidays_count <- seq_df %>% inner_join(holidays, by= "date") %>% nrow()
+  
+  return(holidays_count)
+}
+
+retail_grouping <- online_retail %>% group_by(date, Description) %>% summarise(total_sales= sum(Quantity, na.rm = T))
+
+lagged <- retail_grouping %>% select(date, Description) %>% group_by(Description) %>% nest() %>% mutate(prev_data = lapply(data, lag)) %>% unnest()
+
+lagged <- lagged %>% filter(is.na(date1) == F)
+
+for (i in 1:nrow(lagged)) {
+  lagged$holidays[i] <- holidays_count(lagged$date[i], lagged$date1[i])
+  print(i)
+}
+
+lagged$duration <- lagged$date - lagged$date1
+lagged$duration <- as.numeric(lagged$duration)
+lagged$active_days <- lagged$duration - lagged$holidays
+
+product_segmentation <- lagged %>% group_by(Description) %>% summarise(ADI = mean(active_days, na.rm = T))
+cv_sq <- retail_grouping %>% group_by(Description) %>% summarise(average = mean(total_sales, na.rm = T), sd = sd(total_sales, na.rm = T)) %>% mutate(cv_squared = (sd/average)^2)
+
+product_segmentation <- product_segmentation %>% left_join(cv_sq)
+
+product_segmentation <- product_segmentation %>% mutate(classification= case_when(ADI < 1.32 & cv_squared < 0.49 ~ "smooth", ADI > 1.32 & cv_squared > 0.49 ~ "lumpy", ADI > 1.32 & cv_squared < 0.49 ~ "intermittent", ADI < 1.32 & cv_squared > 0.49 ~ "erratic"))
+
+product_segmentation %>% ggplot(aes(x= log(ADI), y= log(cv_squared), color= classification)) + geom_point() + ggtitle("Product Segmentation for Demand Planning - UK") + theme_minimal() 
+
+table(product_segmentation$classification)
+prop.table(table(product_segmentation$classification))
+
+# SELECT SMOOTH PRODUCTS
+
+smooth_products <- product_segmentation %>% filter(classification == "smooth")
+sales_on_smooth <- online_retail %>% right_join(smooth_products)
+table(sales_on_smooth$Description)
+
+sales_on_smooth$week <- week(sales_on_smooth$InvoiceDate)
+sales_on_smooth$month <- month(sales_on_smooth$InvoiceDate, label = T)
+sales_on_smooth$year <- year(sales_on_smooth$InvoiceDate)
+
+sales_on_smooth <- sales_on_smooth %>% mutate(stockcode6 = case_when(nchar(StockCode, allowNA = F, type = "chars") == 5 ~ paste(StockCode, "-", sep = ""), nchar(StockCode, allowNA = F, type = "chars") == 6 ~ StockCode))
+
+weekly_sales_on_smooth <- sales_on_smooth %>% group_by(year, week, stockcode6) %>% summarise(sales= sum(Quantity, na.rm = T)) %>% arrange(year, week)
+
+monthly_sales_on_smooth <- sales_on_smooth %>% group_by(year, month, stockcode6) %>% summarise(sales= sum(Quantity, na.rm = T)) %>% arrange(year, month)
+
+yearly_sales_on_smooth <- sales_on_smooth %>% group_by(year, stockcode6) %>% summarise(sales= sum(Quantity, na.rm = T)) %>% arrange(year)
+
+pivoted_weekly <- weekly_sales_on_smooth %>% pivot_wider(names_from = stockcode6, values_from = sales, values_fill = 0)
+
+pivoted_monthly <- monthly_sales_on_smooth %>% pivot_wider(names_from = stockcode6, values_from = sales, values_fill = 0)
+
+pivoted_yearly <- yearly_sales_on_smooth %>% pivot_wider(names_from = stockcode6, values_from = sales, values_fill = 0)
+
+ts_weekly <- ts(pivoted_weekly[,3:13], start = c(2009, 48), end = c(2011,49), frequency = 52)
+glimpse(ts_weekly)
+colnames(ts_weekly)
+
+library(hts)
+hirarchical_weekly_smooth <- hts(ts_weekly)
+
+train <- window(hirarchical_weekly_smooth, end= c(2011, 29))
+test <- window(hirarchical_weekly_smooth, start= c(2011, 30))
+
+#ARIMA FORECAST
+forecast_bu_arima <- forecast(train, h= 20, method = "bu", fmethod = "arima")
+
+forecast_td_arima <- forecast(train, h= 20, method = "tdfp", fmethod = "arima")                                 
+
+accuracy(forecast_bu_arima, test, levels= 0)
+accuracy(forecast_td_arima, test, levels= 0)
+
+# ETS
+forecast_bu_ets <- forecast(train, h= 20, method = "bu", fmethod = "ets")
+
+forecast_td_ets <- forecast(train, h= 20, method = "tdfp", fmethod = "ets")                                 
+
+accuracy(forecast_bu_ets, test, levels= 0)
+accuracy(forecast_td_ets, test, levels= 0)
+
+# Random Walk
+forecast_bu_rw <- forecast(train, h= 20, method = "bu", fmethod = "rw")
+
+forecast_td_rw <- forecast(train, h= 20, method = "tdfp", fmethod = "rw")                                 
+
+accuracy(forecast_bu_rw, test, levels= 0)
+accuracy(forecast_td_rw, test, levels= 0)
+
+# FORECAST ON SMOOTH PRODUCTS
+weekly_smooth <- sales_on_smooth %>% group_by(week, year) %>% summarise(sales = sum(Quantity, na.rm = T)) %>% arrange(year, week)
+ts_weekly_smooth <- ts(weekly_smooth[,3], start = c(2009, 48), end = c(2011, 49), frequency = 52)
+autoplot(ts_weekly_smooth) + ggtitle("Weekly Sales for Smooth Product") + theme_minimal()
+
+ggseasonplot(ts_weekly_smooth)
+
+decomposition <- stl(ts_weekly_smooth, s.window = "periodic")
+autoplot(decomposition)
+
+ggAcf(ts_weekly_smooth, lag.max = 53)
+ggPacf(ts_weekly_smooth, lag.max = 53)
+
+# SARIMA
+p = d = q = P = D = Q = c(0, 1, 2)
+grid <- expand.grid(p, d, q, P, D, Q)
+grid$S <- 52
+
+result_list <- list()
+train <- window(ts_weekly_smooth, end= c(2011, 29))
+
+for (i in 1:nrow(grid)) { 
+  
+  tryCatch({
+    model <- arima(train, order = c(grid[i, 1], grid[i, 2], grid[i, 3]), seasonal= list(order= c(grid[i, 4], grid[i, 5], grid[i, 6]), S= grid[i, 7] ))
+    result_list[[i]] <- data.frame(grid[i,], model$aic)
+    print(i)
+  }, error= function(e){})
+  
+}
+
+results <- plyr::ldply(result_list, data.frame)
+best_parameter <- results[results$model.aic == min(results$model.aic),]
+
+best_arima <- arima(train, order= c(best_parameter$Var1, best_parameter$Var2, best_parameter$Var3), seasonal= list(order= c(best_parameter$Var4, best_parameter$Var5, best_parameter$Var6), S= best_parameter$S))
+
+summary(best_arima)
+
+forecast(best_arima, h=20) %>% accuracy(ts_weekly_smooth)
+
+fcast <- forecast(best_arima, h=30)
+
+time(fcast)
+autoplot(fcast)
+
+library(TSPred)
+
+plotarimapred(ts_weekly_smooth, best_arima, xlim=c(min(time(ts_weekly_smooth)), 2012.115))
+
+
